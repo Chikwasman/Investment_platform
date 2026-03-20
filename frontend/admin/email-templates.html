@@ -1,0 +1,227 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
+  <title>Email Templates — Admin</title>
+  <link rel="stylesheet" href="/css/main.css">
+  <style>
+    .template-list{display:flex;flex-direction:column;gap:8px}
+    .template-item{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:16px 20px;display:flex;align-items:center;justify-content:space-between;cursor:pointer;transition:all .2s}
+    .template-item:hover,.template-item.active{border-color:var(--primary);background:var(--primary-glow)}
+    .template-name{font-family:var(--font-display);font-weight:700;font-size:14px}
+    .template-subject{font-size:12px;color:var(--text-secondary);margin-top:3px}
+    .editor-panel{background:var(--bg-card);border:1px solid var(--border);border-radius:var(--radius-xl);padding:28px}
+    .var-pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;background:rgba(0,148,255,.1);border:1px solid rgba(0,148,255,.2);border-radius:100px;font-size:11px;font-family:monospace;color:var(--primary);cursor:pointer;transition:all .2s;margin:3px}
+    .var-pill:hover{background:rgba(0,148,255,.2)}
+    textarea.form-control{min-height:240px;font-family:monospace;font-size:13px;line-height:1.6}
+    .preview-frame{background:var(--bg-input);border:1px solid var(--border);border-radius:var(--radius-md);padding:20px;margin-top:12px;font-size:13px;color:var(--text-secondary);min-height:100px}
+  </style>
+</head>
+<body>
+<div class="sidebar-overlay" id="sidebarOverlay"></div>
+<div class="app-layout">
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand" style="border-bottom:2px solid var(--danger)">
+      <div class="brand-logo" style="background:linear-gradient(135deg,var(--danger),#cc0000)">🛡</div>
+      <div><div class="brand-name">Admin Panel</div><div class="brand-sub">TransAtlantia Trades</div></div>
+    </div>
+    <nav class="sidebar-nav">
+      <a href="/admin/dashboard.html" class="sidebar-link"><span class="nav-icon">📊</span> Dashboard</a>
+      <a href="/admin/users.html" class="sidebar-link"><span class="nav-icon">👥</span> Users</a>
+      <a href="/admin/deposits.html" class="sidebar-link"><span class="nav-icon">💰</span> Deposits</a>
+      <a href="/admin/withdrawals.html" class="sidebar-link"><span class="nav-icon">📤</span> Withdrawals</a>
+      <a href="/admin/transactions.html" class="sidebar-link"><span class="nav-icon">📋</span> Transactions</a>
+      <a href="/admin/plans.html" class="sidebar-link"><span class="nav-icon">📊</span> Plans</a>
+      <a href="/admin/chat.html" class="sidebar-link"><span class="nav-icon">💬</span> Live Chat</a>
+      <a href="/admin/settings.html" class="sidebar-link"><span class="nav-icon">⚙️</span> Settings</a>
+      <a href="/admin/email-templates.html" class="sidebar-link active"><span class="nav-icon">📧</span> Email Templates</a>
+    </nav>
+    <div class="sidebar-footer">
+      <div class="sidebar-user"><div class="user-avatar" style="background:var(--danger)">A</div><div class="user-info"><div class="user-name">Admin</div><div class="user-role" style="color:var(--danger)">Administrator</div></div></div>
+      <button onclick="Auth.logout()" class="btn btn-ghost btn-sm w-full mt-1" style="color:var(--danger)">⬅ Logout</button>
+    </div>
+  </aside>
+
+  <main class="main-content">
+    <header class="topbar">
+      <button class="hamburger" id="hamburger">☰</button>
+      <div class="topbar-title"><h1>Email Templates</h1><p>Customise transactional emails sent to users</p></div>
+    </header>
+
+    <div class="page-content">
+      <div style="display:grid;grid-template-columns:300px 1fr;gap:24px;align-items:start">
+
+        <!-- TEMPLATE LIST -->
+        <div>
+          <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:10px">Templates</div>
+          <div class="template-list" id="templateList">
+            <div class="skeleton" style="height:60px;border-radius:var(--radius-lg)"></div>
+            <div class="skeleton" style="height:60px;border-radius:var(--radius-lg)"></div>
+            <div class="skeleton" style="height:60px;border-radius:var(--radius-lg)"></div>
+          </div>
+        </div>
+
+        <!-- EDITOR -->
+        <div class="editor-panel" id="editorPanel">
+          <div style="text-align:center;padding:40px 0;color:var(--text-muted)">
+            <div style="font-size:2.5rem;margin-bottom:12px">📧</div>
+            <p>Select a template from the left to edit it</p>
+          </div>
+        </div>
+
+      </div>
+    </div>
+  </main>
+</div>
+
+<script src="/js/utils.js"></script>
+<script>
+  if (!Auth.requireAdmin()) throw new Error();
+  UI.initSidebar();
+
+  let templates = [], activeId = null;
+
+  const templateMeta = {
+    welcome: { label: 'Welcome Email', icon: '👋', desc: 'Sent when a new user registers' },
+    email_verification: { label: 'Email Verification', icon: '✉️', desc: 'Verification link email' },
+    password_reset: { label: 'Password Reset', icon: '🔑', desc: 'Password reset link email' },
+    deposit_received: { label: 'Deposit Received', icon: '📥', desc: 'Deposit submitted notification' },
+    deposit_confirmed: { label: 'Deposit Confirmed', icon: '✅', desc: 'After admin confirms deposit' },
+    withdrawal_approved: { label: 'Withdrawal Approved', icon: '💸', desc: 'After admin approves withdrawal' },
+    withdrawal_rejected: { label: 'Withdrawal Rejected', icon: '❌', desc: 'After admin rejects withdrawal' },
+  };
+
+  async function loadTemplates() {
+    try {
+      const res = await api.get('/admin/email-templates');
+      templates = res.templates || [];
+      document.getElementById('templateList').innerHTML = templates.map(t => {
+        const meta = templateMeta[t.name] || { label: t.name, icon: '📧', desc: '' };
+        return `<div class="template-item" id="titem_${t.id}" onclick="selectTemplate('${t.id}')">
+          <div>
+            <div class="template-name">${meta.icon} ${meta.label}</div>
+            <div class="template-subject" title="${t.subject}">${t.subject.substring(0, 45)}${t.subject.length > 45 ? '…' : ''}</div>
+          </div>
+          <span style="font-size:18px;color:var(--border-light)">›</span>
+        </div>`;
+      }).join('');
+    } catch(e) { Toast.error('Failed to load templates'); }
+  }
+
+  function selectTemplate(id) {
+    activeId = id;
+    document.querySelectorAll('.template-item').forEach(el => el.classList.remove('active'));
+    document.getElementById('titem_' + id)?.classList.add('active');
+
+    const t = templates.find(t => t.id === id);
+    if (!t) return;
+    const meta = templateMeta[t.name] || { label: t.name, icon: '📧', desc: '' };
+    const vars = (t.variables || []).map(v => `<span class="var-pill" onclick="insertVar('{{${v}}}')" title="Click to copy">{{${v}}}</span>`).join('');
+
+    document.getElementById('editorPanel').innerHTML = `
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+        <div>
+          <h3 style="font-size:16px;font-weight:700">${meta.icon} ${meta.label}</h3>
+          <p style="font-size:13px;color:var(--text-secondary);margin-top:3px">${meta.desc}</p>
+        </div>
+        <button class="btn btn-primary btn-sm" onclick="saveTemplate()">💾 Save</button>
+      </div>
+
+      <div id="saveAlert"></div>
+
+      <div class="form-group">
+        <label class="form-label">Subject Line</label>
+        <input type="text" class="form-control" id="tSubject" value="${escHtml(t.subject)}">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label" style="display:flex;align-items:center;justify-content:space-between">
+          Email Body (HTML)
+          <span style="font-size:11px;font-weight:400;color:var(--text-muted)">Available variables:</span>
+        </label>
+        ${vars ? `<div style="margin-bottom:10px">${vars}</div>` : ''}
+        <textarea class="form-control" id="tBody">${escHtml(t.body)}</textarea>
+      </div>
+
+      <div style="margin-top:16px">
+        <div style="font-size:11px;font-weight:700;text-transform:uppercase;letter-spacing:.08em;color:var(--text-muted);margin-bottom:8px">Preview (raw HTML)</div>
+        <div class="preview-frame" id="htmlPreview"></div>
+      </div>
+    `;
+
+    // Live preview
+    document.getElementById('tBody').addEventListener('input', updatePreview);
+    updatePreview();
+  }
+
+  function updatePreview() {
+    const body = document.getElementById('tBody')?.value || '';
+    const preview = document.getElementById('htmlPreview');
+    if (preview) preview.innerHTML = body;
+  }
+
+  function insertVar(v) {
+    const ta = document.getElementById('tBody');
+    if (!ta) return;
+    const start = ta.selectionStart;
+    const end = ta.selectionEnd;
+    ta.value = ta.value.substring(0, start) + v + ta.value.substring(end);
+    ta.selectionStart = ta.selectionEnd = start + v.length;
+    ta.focus();
+    updatePreview();
+    Toast.success('Variable inserted', 1500);
+  }
+
+  async function saveTemplate() {
+    if (!activeId) return;
+    const subject = document.getElementById('tSubject').value.trim();
+    const body = document.getElementById('tBody').value;
+    if (!subject) { Toast.error('Subject cannot be empty'); return; }
+
+    try {
+      const res = await api.put('/admin/email-templates/' + activeId, { subject, body });
+      if (res.success) {
+        Toast.success('Template saved!');
+        // Update local cache
+        const t = templates.find(t => t.id === activeId);
+        if (t) { t.subject = subject; t.body = body; }
+        loadTemplates();
+        UI.showAlert(document.getElementById('saveAlert'), '✅ Template saved successfully', 'success');
+        setTimeout(() => { const a = document.getElementById('saveAlert'); if(a) a.innerHTML=''; }, 3000);
+      } else {
+        Toast.error(res.message || 'Save failed');
+      }
+    } catch(e) { Toast.error('Error saving'); }
+  }
+
+  function escHtml(str) {
+    return String(str||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+  }
+
+  loadTemplates();
+</script>
+
+<script>
+async function updateChatBadge() {
+  try {
+    const res = await api.get('/chat/admin/unread');
+    const badge = document.getElementById('chatNavBadge');
+    if (badge) {
+      if (res.count > 0) { badge.style.display = 'inline-flex'; badge.textContent = res.count > 9 ? '9+' : res.count; }
+      else badge.style.display = 'none';
+    }
+  } catch(e) {}
+}
+document.addEventListener('DOMContentLoaded', () => {
+  const chatLink = document.querySelector('a[href="/admin/chat.html"]');
+  if (chatLink && !chatLink.querySelector('#chatNavBadge')) {
+    const badge = document.createElement('span');
+    badge.id = 'chatNavBadge';
+    badge.style.cssText = 'display:none;background:#FF4757;color:#fff;font-size:10px;font-weight:800;padding:2px 6px;border-radius:100px;margin-left:auto;min-width:18px;text-align:center';
+    chatLink.appendChild(badge);
+  }
+  if (Auth.isAdmin()) { updateChatBadge(); setInterval(updateChatBadge, 20000); }
+});
+</script>
+</body>
+</html>
