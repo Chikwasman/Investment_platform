@@ -3,6 +3,7 @@ const router = express.Router();
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 const { body, validationResult } = require('express-validator');
 const { query } = require('../utils/db');
 const { sendEmail } = require('../utils/email');
@@ -118,6 +119,14 @@ router.post('/login', [
       return res.status(403).json({ success: false, message: 'Account suspended. Contact support.' });
     }
 
+    if (!user.email_verified) {
+      return res.status(403).json({
+        success: false,
+        message: 'Please verify your email before logging in. Check your inbox for the verification link.',
+        code: 'EMAIL_NOT_VERIFIED',
+      });
+    }
+
     const validPassword = await bcrypt.compare(password, user.password_hash);
     if (!validPassword) {
       return res.status(401).json({ success: false, message: 'Invalid email or password' });
@@ -190,7 +199,7 @@ router.post('/forgot-password', [body('email').isEmail().normalizeEmail()], asyn
     }
 
     const user = result.rows[0];
-    const resetToken = uuidv4();
+    const resetToken = crypto.randomBytes(32).toString('hex');
     const expires = new Date(Date.now() + 3600000); // 1 hour
 
     await query(

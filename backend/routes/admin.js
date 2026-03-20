@@ -180,12 +180,20 @@ router.patch('/users/:id/kyc', adminAuth, async (req, res) => {
 // ============================================================
 router.get('/deposits', adminAuth, async (req, res) => {
   try {
+    // Whitelist allowed status values — never interpolate user input into SQL
+    const ALLOWED_STATUSES = ['pending', 'confirmed', 'rejected'];
     const status = req.query.status || 'all';
     const page = parseInt(req.query.page) || 1;
     const limit = 20;
     const offset = (page - 1) * limit;
 
-    let whereClause = status !== 'all' ? `WHERE d.status = '${status}'` : '';
+    const params = [limit, offset];
+    let whereClause = '';
+    if (status !== 'all' && ALLOWED_STATUSES.includes(status)) {
+      params.push(status);
+      whereClause = `WHERE d.status = $${params.length}`;
+    }
+
     const result = await query(`
       SELECT d.*, u.first_name, u.last_name, u.email, ip.name as plan_name
       FROM deposits d
@@ -194,7 +202,7 @@ router.get('/deposits', adminAuth, async (req, res) => {
       ${whereClause}
       ORDER BY d.created_at DESC
       LIMIT $1 OFFSET $2
-    `, [limit, offset]);
+    `, params);
 
     res.json({ success: true, deposits: result.rows });
   } catch (error) {
@@ -312,8 +320,15 @@ router.patch('/deposits/:id/reject', adminAuth, async (req, res) => {
 // ============================================================
 router.get('/withdrawals', adminAuth, async (req, res) => {
   try {
+    const ALLOWED_STATUSES = ['pending', 'approved', 'rejected', 'processing'];
     const status = req.query.status || 'all';
-    let whereClause = status !== 'all' ? `WHERE w.status = '${status}'` : '';
+
+    const params = [];
+    let whereClause = '';
+    if (status !== 'all' && ALLOWED_STATUSES.includes(status)) {
+      params.push(status);
+      whereClause = `WHERE w.status = $1`;
+    }
 
     const result = await query(`
       SELECT w.*, u.first_name, u.last_name, u.email
@@ -322,7 +337,7 @@ router.get('/withdrawals', adminAuth, async (req, res) => {
       ${whereClause}
       ORDER BY w.created_at DESC
       LIMIT 50
-    `);
+    `, params);
     res.json({ success: true, withdrawals: result.rows });
   } catch (error) {
     res.status(500).json({ success: false, message: 'Server error' });

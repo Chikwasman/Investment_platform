@@ -28,6 +28,22 @@ const setupChatSocket = (io) => {
     const user = socket.user;
     const isAdmin = user?.is_admin;
 
+    // Simple in-memory rate limiter: max 20 messages per minute per socket
+    let msgCount = 0;
+    let msgWindow = Date.now();
+    const MSG_LIMIT = 20;
+    const MSG_WINDOW_MS = 60 * 1000;
+
+    const isRateLimited = () => {
+      const now = Date.now();
+      if (now - msgWindow > MSG_WINDOW_MS) {
+        msgCount = 0;
+        msgWindow = now;
+      }
+      msgCount++;
+      return msgCount > MSG_LIMIT;
+    };
+
     // Admin joins the shared admin room for broadcast notifications
     if (isAdmin) {
       socket.join('admins');
@@ -62,6 +78,10 @@ const setupChatSocket = (io) => {
     // ---- SEND MESSAGE ----
     socket.on('send_message', async ({ session_id, message }) => {
       if (!message?.trim() || !session_id || !isValidUUID(session_id)) return;
+      if (isRateLimited()) {
+        socket.emit('error', { message: 'You are sending messages too quickly. Please slow down.' });
+        return;
+      }
 
       try {
         const senderType = isAdmin ? 'admin' : 'user';
@@ -131,7 +151,7 @@ const setupChatSocket = (io) => {
         );
         const result = await query(
           `INSERT INTO chat_messages (session_id, sender_type, sender_name, message)
-           VALUES ($1, 'system', 'TransAtlantia Support', 'This chat session has been closed. Thank you for contacting us! 😊') RETURNING *`,
+           VALUES ($1, 'system', 'AtlasTitan Support', 'This chat session has been closed. Thank you for contacting us! 😊') RETURNING *`,
           [session_id]
         );
         io.to(`session_${session_id}`).emit('new_message', result.rows[0]);

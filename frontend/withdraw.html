@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0">
-  <title>Withdraw — TransAtlantia Trades</title>
+  <title>Withdraw — AtlasTitan Trades</title>
   <link rel="stylesheet" href="/css/main.css">
   <style>
     /* ---- CRYPTO CARD SELECTOR ---- */
@@ -102,7 +102,7 @@
 <div class="sidebar-overlay" id="sidebarOverlay"></div>
 <div class="app-layout">
   <aside class="sidebar" id="sidebar">
-    <div class="sidebar-brand"><div class="brand-logo">⚡</div><div><div class="brand-name">TransAtlantia</div><div class="brand-sub">Trades</div></div></div>
+    <div class="sidebar-brand"><div class="brand-logo">⚡</div><div><div class="brand-name">AtlasTitan</div><div class="brand-sub">Trades</div></div></div>
     <nav class="sidebar-nav">
       <a href="/dashboard.html" class="sidebar-link"><span class="nav-icon">📊</span> Dashboard</a>
       <a href="/deposit.html" class="sidebar-link"><span class="nav-icon">💰</span> Deposit</a>
@@ -499,7 +499,7 @@
             <div style="font-size:11px;color:var(--text-muted);margin-top:3px;font-family:monospace;word-break:break-all">
               → ${w.wallet_address}
             </div>
-            ${w.admin_note ? `<div style="font-size:11px;color:var(--warning);margin-top:4px">Note: ${w.admin_note}</div>` : ''}
+            ${w.admin_note ? `<div style="font-size:11px;color:var(--warning);margin-top:4px">Note: ${escHtml(w.admin_note)}</div>` : ''}
           </div>
           <div style="flex-shrink:0">${fmt.badge(w.status)}</div>
         </div>
@@ -508,6 +508,8 @@
   }
 
   // Init address hint
+  function escHtml(s) { return String(s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
+
   showAddrIdle();
   loadWithdrawPage();
 </script>

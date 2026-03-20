@@ -73,17 +73,47 @@ router.post('/', auth, [
       return res.status(400).json({ success: false, message: 'You already have a pending withdrawal request' });
     }
 
-    // Deduct from balance (hold)
-    await query(
-      'UPDATE user_balances SET withdrawable_balance = withdrawable_balance - $1 WHERE user_id = $2',
-      [amount, req.user.id]
-    );
+    // Use a DB transaction to prevent race condition double-spend
+    // If two requests arrive simultaneously, the second will see balance=0 after the first commits
+    const { getClient } = require('../utils/db');
+    const client = await getClient();
+    let withdrawal;
+    try {
+      await client.query('BEGIN');
 
-    const withdrawal = await query(`
-      INSERT INTO withdrawals (user_id, amount, currency, wallet_address)
-      VALUES ($1, $2, $3, $4)
-      RETURNING *
-    `, [req.user.id, amount, currency, wallet_address]);
+      // Re-read balance inside transaction with a row lock
+      const lockedBalance = await client.query(
+        'SELECT withdrawable_balance FROM user_balances WHERE user_id = $1 FOR UPDATE',
+        [req.user.id]
+      );
+      const currentBalance = parseFloat(lockedBalance.rows[0]?.withdrawable_balance || 0);
+      if (parseFloat(amount) > currentBalance) {
+        await client.query('ROLLBACK');
+        client.release();
+        return res.status(400).json({ success: false, message: 'Insufficient balance' });
+      }
+
+      // Deduct balance
+      await client.query(
+        'UPDATE user_balances SET withdrawable_balance = withdrawable_balance - $1 WHERE user_id = $2',
+        [amount, req.user.id]
+      );
+
+      // Create withdrawal record
+      const result = await client.query(`
+        INSERT INTO withdrawals (user_id, amount, currency, wallet_address)
+        VALUES ($1, $2, $3, $4)
+        RETURNING *
+      `, [req.user.id, amount, currency, wallet_address]);
+      withdrawal = { rows: result.rows };
+
+      await client.query('COMMIT');
+    } catch (txError) {
+      await client.query('ROLLBACK');
+      client.release();
+      throw txError;
+    }
+    client.release();
 
     // Log transaction
     const newBalance = await query('SELECT withdrawable_balance FROM user_balances WHERE user_id = $1', [req.user.id]);

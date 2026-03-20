@@ -89,8 +89,15 @@ router.get('/session/:id/messages', async (req, res) => {
 // ============================================================
 router.get('/admin/sessions', adminAuth, async (req, res) => {
   try {
+    const ALLOWED_STATUSES = ['open', 'active', 'closed', 'archived'];
     const status = req.query.status || 'open';
-    const whereClause = status === 'all' ? '' : `WHERE cs.status = '${status}'`;
+
+    const params = [];
+    let whereClause = '';
+    if (status !== 'all' && ALLOWED_STATUSES.includes(status)) {
+      params.push(status);
+      whereClause = `WHERE cs.status = $1`;
+    }
 
     const result = await query(`
       SELECT cs.*,
@@ -100,7 +107,7 @@ router.get('/admin/sessions', adminAuth, async (req, res) => {
       ${whereClause}
       ORDER BY cs.last_message_at DESC
       LIMIT 100
-    `);
+    `, params);
 
     res.json({ success: true, sessions: result.rows });
   } catch (error) {

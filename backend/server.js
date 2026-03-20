@@ -4,46 +4,142 @@ const { Server } = require('socket.io');
 const cors = require('cors');
 const path = require('path');
 const rateLimit = require('express-rate-limit');
+const helmet = require('helmet');
 require('dotenv').config();
 const { maintenanceCheck } = require('./middleware/maintenance');
 
 const app = express();
 const server = http.createServer(app);
-const io = new Server(server, { cors: { origin: process.env.SITE_URL || '*', methods: ['GET','POST'], credentials: true } });
+const io = new Server(server, {
+  cors: {
+    origin: process.env.SITE_URL || 'http://localhost:5000',
+    methods: ['GET', 'POST'],
+    credentials: true,
+  },
+});
 const PORT = process.env.PORT || 5000;
 
 // ============================================================
-// MIDDLEWARE
+// SECURITY HEADERS — Helmet (fixes XSS, clickjacking, sniffing)
 // ============================================================
-app.use(cors({
-  origin: process.env.SITE_URL || '*',
-  credentials: true,
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      scriptSrc: [
+        "'self'",
+        "'unsafe-inline'",          // needed for inline scripts in HTML pages
+        "translate.google.com",
+        "translate.googleapis.com",
+        "cdnjs.cloudflare.com",
+      ],
+      styleSrc: ["'self'", "'unsafe-inline'", "fonts.googleapis.com"],
+      fontSrc: ["'self'", "fonts.gstatic.com"],
+      imgSrc: ["'self'", "data:", "https:", "images.unsplash.com"],
+      connectSrc: ["'self'", "wss:", "ws:"],
+      frameSrc: ["'none'"],
+      objectSrc: ["'none'"],
+    },
+  },
+  crossOriginEmbedderPolicy: false, // needed for Google Translate iframe
+  xFrameOptions: { action: 'deny' },            // clickjacking protection
+  xContentTypeOptions: true,                    // no MIME sniffing
+  referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+  hsts: {
+    maxAge: 31536000,       // 1 year
+    includeSubDomains: true,
+    preload: true,
+  },
 }));
+
+// ============================================================
+// CORS — Strict origin, not wildcard
+// ============================================================
+const allowedOrigins = [
+  process.env.SITE_URL,
+  'http://localhost:5000',
+  'http://localhost:3000',
+].filter(Boolean);
+
+app.use(cors({
+  origin: (origin, callback) => {
+    // Allow requests with no origin (mobile apps, curl, same-origin)
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    callback(new Error(`CORS blocked: ${origin}`));
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+}));
+
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 
-// Rate limiting
+// ============================================================
+// HTTPS REDIRECT — in production behind Nginx/proxy
+// ============================================================
+if (process.env.NODE_ENV === 'production') {
+  app.use((req, res, next) => {
+    if (req.headers['x-forwarded-proto'] !== 'https') {
+      return res.redirect(301, `https://${req.headers.host}${req.url}`);
+    }
+    next();
+  });
+}
+
+// ============================================================
+// RATE LIMITING
+// ============================================================
+// Global limiter
 const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
+  windowMs: 15 * 60 * 1000,
   max: 100,
-  message: { success: false, message: 'Too many requests, please try again later.' }
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many requests, please try again later.' },
 });
 
+// Strict limiter for auth endpoints (login, register, forgot-password)
 const authLimiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 10,
-  message: { success: false, message: 'Too many login attempts, please try again later.' }
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { success: false, message: 'Too many attempts, please try again in 15 minutes.' },
+});
+
+// Withdrawal limiter — max 5 per hour
+const withdrawalLimiter = rateLimit({
+  windowMs: 60 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  message: { success: false, message: 'Too many withdrawal requests. Please wait before trying again.' },
 });
 
 app.use('/api/', limiter);
 app.use('/api/auth/login', authLimiter);
 app.use('/api/auth/register', authLimiter);
+app.use('/api/auth/forgot-password', authLimiter);   // FIX: was missing
+app.use('/api/auth/reset-password', authLimiter);
+app.use('/api/withdrawals', withdrawalLimiter);       // FIX: was missing
 
-// Static file serving
+// ============================================================
+// STATIC FILES — with security headers on uploads
+// ============================================================
 app.use(express.static(path.join(__dirname, '../frontend')));
-app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 
-// Maintenance mode check (after static files, before routes)
+// Serve uploads with forced download header (prevents browser execution of HTML/SVG)
+app.use('/uploads', (req, res, next) => {
+  res.setHeader('Content-Disposition', 'attachment');
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Cache-Control', 'private, no-cache');
+  next();
+}, express.static(path.join(__dirname, '../uploads')));
+
+// ============================================================
+// MAINTENANCE MODE
+// ============================================================
 app.use(maintenanceCheck);
 
 // ============================================================
@@ -62,38 +158,33 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: new Date().toISOString() });
 });
 
-// Serve frontend static files (SPA + 404 fallback)
+// 404 for unknown HTML pages
 app.get('*', (req, res) => {
-  const reqPath = req.path;
-  // If requesting a .html file that doesn't exist, serve 404
-  if (reqPath.endsWith('.html')) {
+  if (req.path.endsWith('.html')) {
     return res.status(404).sendFile(path.join(__dirname, '../frontend/404.html'));
   }
-  // For non-file routes (clean URLs), serve index
   res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
 // ============================================================
-// ERROR HANDLER
+// GLOBAL ERROR HANDLER — never leak stack traces
 // ============================================================
 app.use((err, req, res, next) => {
-  console.error('Unhandled error:', err.stack);
+  // Log full error server-side
+  console.error('[ERROR]', err.message, err.stack);
+  // Only send generic message to client
   res.status(500).json({ success: false, message: 'Internal server error' });
 });
 
 // ============================================================
-// START SERVER
+// START
 // ============================================================
-// Setup chat socket
 const { setupChatSocket } = require('./chatSocket');
 setupChatSocket(io);
 
 server.listen(PORT, () => {
-  console.log(`\n🚀 Investment Platform Server running on port ${PORT}`);
-  console.log(`📊 Environment: ${process.env.NODE_ENV || 'development'}`);
-  console.log(`🌐 URL: ${process.env.SITE_URL || `http://localhost:${PORT}`}\n`);
-
-  // Start cron jobs
+  console.log(`\n🚀 Server running on port ${PORT} [${process.env.NODE_ENV || 'development'}]`);
+  console.log(`🌐 ${process.env.SITE_URL || `http://localhost:${PORT}`}\n`);
   const { startProfitCron } = require('./utils/profitCron');
   startProfitCron();
 });
